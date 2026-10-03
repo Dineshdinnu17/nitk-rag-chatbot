@@ -8,8 +8,8 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-DOCS_DIR = Path("docs")          # put official NITK PDFs here
-DB_DIR = "chroma_db"             # persisted vector store
+DOCS_DIR = Path(__file__).parent   # looks for PDFs in the repo (any folder)
+DB_DIR = "chroma_db"
 EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 TOP_K = 4
 
@@ -29,10 +29,9 @@ def get_embeddings():
 
 
 def build_index() -> int:
-    """Load PDFs, chunk them, embed with Sentence-Transformers, store in ChromaDB."""
-    pdfs = sorted(DOCS_DIR.glob("*.pdf"))
+    pdfs = sorted(p for p in DOCS_DIR.rglob("*") if p.suffix.lower() == ".pdf")
     if not pdfs:
-        raise FileNotFoundError(f"No PDFs found in ./{DOCS_DIR}/")
+        raise FileNotFoundError("No PDFs found in the repository")
 
     pages = []
     for pdf in pdfs:
@@ -44,7 +43,6 @@ def build_index() -> int:
     splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=150)
     chunks = splitter.split_documents(pages)
 
-    # Rebuild from scratch so re-indexing never duplicates chunks
     existing = Chroma(persist_directory=DB_DIR, embedding_function=get_embeddings())
     existing.delete_collection()
     Chroma.from_documents(chunks, get_embeddings(), persist_directory=DB_DIR)
@@ -56,7 +54,6 @@ def get_vectorstore() -> Chroma:
 
 
 def get_llm():
-    """Pick the LLM via LLM_PROVIDER=groq|gemini (default groq)."""
     provider = os.getenv("LLM_PROVIDER", "groq").lower()
     if provider == "gemini":
         from langchain_google_genai import ChatGoogleGenerativeAI
@@ -74,7 +71,6 @@ def get_llm():
 
 
 def answer(question: str, vectorstore: Chroma, llm):
-    """Retrieve relevant chunks, then generate a grounded answer with sources."""
     docs = vectorstore.similarity_search(question, k=TOP_K)
     context = "\n\n".join(
         f"[{d.metadata['source']}, p.{d.metadata['page']}]\n{d.page_content}" for d in docs
